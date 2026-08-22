@@ -10,9 +10,9 @@ class Command(BaseCommand):
     def handle(self, *args, **kwargs):
         User = get_user_model()
 
-        username = os.environ.get("DJANGO_SUPERUSER_USERNAME")
-        email = os.environ.get("DJANGO_SUPERUSER_EMAIL")
-        password = os.environ.get("DJANGO_SUPERUSER_PASSWORD")
+        username = os.environ.get("admin")
+        email = os.environ.get("jobconnect@gmail.com")
+        password = os.environ.get("job123")
 
         if not username or not password:
             self.stdout.write(
