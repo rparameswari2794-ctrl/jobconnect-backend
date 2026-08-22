@@ -20,12 +20,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-k1y-e-zr^&@3!b+89axyobh2zc#28&5g4h3q$m(pyn09q7)b7b'
+import os
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    "django-insecure-local-development-key"
+)
 
-ALLOWED_HOSTS = []
+DEBUG = os.environ.get(
+    "DEBUG",
+    "True"
+).lower() == "true"
+
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    ".onrender.com",
+]
 
 
 # Application definition
@@ -124,7 +135,15 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
-CORS_ALLOW_ALL_ORIGINS = True
+
+FRONTEND_URL = os.environ.get(
+    "FRONTEND_URL",
+    "http://localhost:5173"
+)
+
+if FRONTEND_URL not in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS.append(FRONTEND_URL)
+
 
 # =========================================================
 # CSRF
@@ -134,6 +153,9 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+
+if FRONTEND_URL not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(FRONTEND_URL)
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -176,13 +198,3 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-
-EMAIL_HOST_USER = "rparameswari2794@gmail.com"
-EMAIL_HOST_PASSWORD = "aydqiqzzurwbjdfi"
-
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
