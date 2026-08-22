@@ -134,6 +134,7 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://jobconnect-frontend-lyart.vercel.app",
 ]
 
 FRONTEND_URL = os.environ.get(
@@ -152,6 +153,7 @@ if FRONTEND_URL not in CORS_ALLOWED_ORIGINS:
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://jobconnect-frontend-lyart.vercel.app",
 ]
 
 if FRONTEND_URL not in CSRF_TRUSTED_ORIGINS:
