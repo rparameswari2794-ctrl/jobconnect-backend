@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+
+# Django
+*.log
+
+# Database
+db.sqlite3
+
+# Media / uploaded files
+aadhaar/
+resumes/
+employers/
+jobseekers/
+employer_documents/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# OS
+.DS_Store
+Thumbs.db
