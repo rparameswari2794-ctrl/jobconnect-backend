@@ -167,21 +167,33 @@ SIMPLE_JWT = {
 
 
 # =========================================================
-# CORS CONFIGURATION
+# CORS
 # =========================================================
 
 FRONTEND_URL = os.environ.get(
     "FRONTEND_URL",
     "http://localhost:5173"
-)
+).rstrip("/")
 
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 
-    FRONTEND_URL,
+    # Current production Vercel URL
+    "https://jobconnect-frontend-henna.vercel.app",
 ]
+
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    # Vercel deployment/preview URLs for this project
+    r"^https://jobconnect-frontend-[a-z0-9]+-parameswaris-projects-73759774\.vercel\.app$",
+]
+
+
+# Add environment-provided frontend URL too
+if FRONTEND_URL not in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS.append(FRONTEND_URL)
 
 
 CORS_ALLOW_CREDENTIALS = True
@@ -201,15 +213,19 @@ CORS_ALLOW_HEADERS = [
 
 
 # =========================================================
-# CSRF CONFIGURATION
+# CSRF
 # =========================================================
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 
-    FRONTEND_URL,
+    "https://jobconnect-frontend-henna.vercel.app",
 ]
+
+
+if FRONTEND_URL not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(FRONTEND_URL)
 
 
 # =========================================================
