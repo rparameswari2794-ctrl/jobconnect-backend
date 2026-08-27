@@ -570,19 +570,19 @@ class JobSeekerProfileView(APIView):
         # PROFILE ALREADY APPROVED
         # =================================================
 
-        if profile.approval_status == "approved":
+        # if profile.approval_status == "approved":
 
-            return Response(
-                {
-                    "message":
-                        "Your profile has already been approved.",
+        #     return Response(
+        #         {
+        #             "message":
+        #                 "Your profile has already been approved.",
 
-                    "profile_completed": True,
-                    "approval_status": "approved",
-                    "readonly": True,
-                },
-                status=status.HTTP_403_FORBIDDEN
-            )
+        #             "profile_completed": True,
+        #             "approval_status": "approved",
+        #             "readonly": True,
+        #         },
+        #         status=status.HTTP_403_FORBIDDEN
+        #     )
 
         # =================================================
         # REJECTED PROFILE
