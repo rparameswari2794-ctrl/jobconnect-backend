@@ -43,10 +43,7 @@ urlpatterns = [
         "api/admin/",
         include("adminpanel.urls")
     ),
-    path(
-        "api/auth/",
-        include("adminpanel.auth_urls")
-    ),
+ 
 
     # =====================================================
     # JOB SEEKER
