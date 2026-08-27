@@ -26,8 +26,13 @@ from jobconnect.authentication import authenticate_by_email
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
+from django.conf import settings
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
 # =========================================================
 # COMMON LOGIN
+# Email/Password + Google Login
 # =========================================================
 
 class CommonLoginView(APIView):
@@ -37,29 +42,54 @@ class CommonLoginView(APIView):
     def post(self, request):
 
         # =====================================================
-        # GET LOGIN DATA
+        # GOOGLE LOGIN
         # =====================================================
 
-        email = request.data.get("email", "")
-        password = request.data.get("password", "")
+        google_token = request.data.get(
+            "google_token"
+        )
+
+        if google_token:
+
+            return self.google_login(
+                google_token
+            )
+
+        # =====================================================
+        # GET LOGIN DATA
+        # EXISTING FUNCTIONALITY - UNCHANGED
+        # =====================================================
+
+        email = request.data.get(
+            "email",
+            ""
+        )
+
+        password = request.data.get(
+            "password",
+            ""
+        )
 
         email = email.strip().lower()
 
         # =====================================================
         # VALIDATION
+        # EXISTING FUNCTIONALITY - UNCHANGED
         # =====================================================
 
         if not email or not password:
 
             return Response(
                 {
-                    "detail": "Email and password are required."
+                    "detail":
+                        "Email and password are required."
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # =====================================================
         # FIND USER BY EMAIL
+        # EXISTING FUNCTIONALITY - UNCHANGED
         # =====================================================
 
         try:
@@ -72,13 +102,15 @@ class CommonLoginView(APIView):
 
             return Response(
                 {
-                    "detail": "Invalid email or password."
+                    "detail":
+                        "Invalid email or password."
                 },
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
         # =====================================================
         # AUTHENTICATE PASSWORD
+        # EXISTING FUNCTIONALITY - UNCHANGED
         # =====================================================
 
         user = authenticate(
@@ -90,13 +122,15 @@ class CommonLoginView(APIView):
 
             return Response(
                 {
-                    "detail": "Invalid email or password."
+                    "detail":
+                        "Invalid email or password."
                 },
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
         # =====================================================
         # DETERMINE ROLE
+        # EXISTING FUNCTIONALITY - UNCHANGED
         # =====================================================
 
         role = None
@@ -108,7 +142,9 @@ class CommonLoginView(APIView):
         )
 
         approval_status = None
+
         profile_completed = False
+
         company_name = None
 
         # =====================================================
@@ -126,13 +162,17 @@ class CommonLoginView(APIView):
             )
 
             approval_status = "approved"
+
             profile_completed = True
 
         # =====================================================
         # EMPLOYER
         # =====================================================
 
-        elif hasattr(user, "employer_profile"):
+        elif hasattr(
+            user,
+            "employer_profile"
+        ):
 
             profile = user.employer_profile
 
@@ -161,7 +201,331 @@ class CommonLoginView(APIView):
         # JOB SEEKER
         # =====================================================
 
-        elif hasattr(user, "jobseeker_profile"):
+        elif hasattr(
+            user,
+            "jobseeker_profile"
+        ):
+
+            profile = user.jobseeker_profile
+
+            role = "jobseeker"
+
+            name = (
+                profile.full_name
+                or user.username
+            )
+
+            approval_status = (
+                profile.approval_status
+            )
+
+            profile_completed = (
+                profile.profile_completed
+            )
+
+        # =====================================================
+        # UNKNOWN USER
+        # EXISTING FUNCTIONALITY - UNCHANGED
+        # =====================================================
+
+        else:
+
+            return Response(
+                {
+                    "detail":
+                        "User role could not be determined."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # =====================================================
+        # JWT
+        # EXISTING FUNCTIONALITY - UNCHANGED
+        # =====================================================
+
+        refresh = RefreshToken.for_user(
+            user
+        )
+
+        access_token = str(
+            refresh.access_token
+        )
+
+        refresh_token = str(
+            refresh
+        )
+
+        # =====================================================
+        # USER RESPONSE
+        # EXISTING FUNCTIONALITY - UNCHANGED
+        # =====================================================
+
+        user_data = {
+
+            "id":
+                user.id,
+
+            "name":
+                name,
+
+            "username":
+                user.username,
+
+            "email":
+                user.email,
+
+            "role":
+                role,
+
+            "approval_status":
+                approval_status,
+
+            "profile_completed":
+                profile_completed,
+        }
+
+        # =====================================================
+        # EMPLOYER COMPANY NAME
+        # EXISTING FUNCTIONALITY - UNCHANGED
+        # =====================================================
+
+        if role == "employer":
+
+            user_data["company_name"] = (
+                company_name
+            )
+
+        # =====================================================
+        # RESPONSE
+        # EXISTING FUNCTIONALITY - UNCHANGED
+        # =====================================================
+
+        return Response(
+            {
+                "message":
+                    "Login successful.",
+
+                "access":
+                    access_token,
+
+                "refresh":
+                    refresh_token,
+
+                "user":
+                    user_data,
+            },
+            status=status.HTTP_200_OK
+        )
+
+    # =========================================================
+    # GOOGLE LOGIN
+    # NEW FUNCTIONALITY ONLY
+    # =========================================================
+
+    def google_login(
+        self,
+        google_token
+    ):
+
+        # =====================================================
+        # GOOGLE CLIENT ID
+        # =====================================================
+
+        google_client_id = getattr(
+            settings,
+            "GOOGLE_CLIENT_ID",
+            None
+        )
+
+        if not google_client_id:
+
+            return Response(
+                {
+                    "detail":
+                        "Google OAuth is not configured on the server."
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # =====================================================
+        # VERIFY GOOGLE ID TOKEN
+        # =====================================================
+
+        try:
+
+            google_user = (
+                id_token.verify_oauth2_token(
+                    google_token,
+                    google_requests.Request(),
+                    google_client_id
+                )
+            )
+
+        except ValueError:
+
+            return Response(
+                {
+                    "detail":
+                        "Invalid or expired Google token."
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        except Exception as exc:
+
+            print(
+                "GOOGLE TOKEN ERROR:",
+                exc
+            )
+
+            return Response(
+                {
+                    "detail":
+                        "Unable to verify Google account."
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # =====================================================
+        # GOOGLE EMAIL
+        # =====================================================
+
+        google_email = google_user.get(
+            "email"
+        )
+
+        email_verified = google_user.get(
+            "email_verified",
+            False
+        )
+
+        if not google_email:
+
+            return Response(
+                {
+                    "detail":
+                        "Google email address was not received."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # =====================================================
+        # CHECK VERIFIED EMAIL
+        # =====================================================
+
+        if not email_verified:
+
+            return Response(
+                {
+                    "detail":
+                        "Your Google email address is not verified."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        google_email = (
+            google_email
+            .strip()
+            .lower()
+        )
+
+        # =====================================================
+        # FIND EXISTING JOB CONNECT USER
+        # =====================================================
+
+        try:
+
+            user = User.objects.get(
+                email__iexact=google_email
+            )
+
+        except User.DoesNotExist:
+
+            return Response(
+                {
+                    "detail":
+                        "No Job Connect account exists with this Google email. Please create an account first."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # =====================================================
+        # DETERMINE ROLE
+        # SAME EXISTING LOGIC
+        # =====================================================
+
+        role = None
+
+        name = (
+            user.get_full_name()
+            or user.username
+            or user.email
+        )
+
+        approval_status = None
+
+        profile_completed = False
+
+        company_name = None
+
+        # =====================================================
+        # ADMIN
+        # =====================================================
+
+        if user.is_superuser or user.is_staff:
+
+            role = "admin"
+
+            name = (
+                user.get_full_name()
+                or user.username
+                or "Admin"
+            )
+
+            approval_status = "approved"
+
+            profile_completed = True
+
+        # =====================================================
+        # EMPLOYER
+        # =====================================================
+
+        elif hasattr(
+            user,
+            "employer_profile"
+        ):
+
+            profile = user.employer_profile
+
+            role = "employer"
+
+            name = (
+                profile.contact_name
+                or profile.company_name
+                or user.username
+            )
+
+            company_name = (
+                profile.company_name
+                or ""
+            )
+
+            approval_status = (
+                profile.approval_status
+            )
+
+            profile_completed = (
+                profile.profile_completed
+            )
+
+        # =====================================================
+        # JOB SEEKER
+        # =====================================================
+
+        elif hasattr(
+            user,
+            "jobseeker_profile"
+        ):
 
             profile = user.jobseeker_profile
 
@@ -195,10 +559,12 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # JWT
+        # CREATE JWT
         # =====================================================
 
-        refresh = RefreshToken.for_user(user)
+        refresh = RefreshToken.for_user(
+            user
+        )
 
         access_token = str(
             refresh.access_token
@@ -209,7 +575,7 @@ class CommonLoginView(APIView):
         )
 
         # =====================================================
-        # USER RESPONSE
+        # USER DATA
         # =====================================================
 
         user_data = {
@@ -237,7 +603,7 @@ class CommonLoginView(APIView):
         }
 
         # =====================================================
-        # EMPLOYER COMPANY NAME
+        # EMPLOYER COMPANY
         # =====================================================
 
         if role == "employer":
@@ -247,13 +613,14 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # RESPONSE
+        # GOOGLE LOGIN RESPONSE
+        # SAME JWT FORMAT AS NORMAL LOGIN
         # =====================================================
 
         return Response(
             {
                 "message":
-                    "Login successful.",
+                    "Google login successful.",
 
                 "access":
                     access_token,
@@ -266,7 +633,6 @@ class CommonLoginView(APIView):
             },
             status=status.HTTP_200_OK
         )
-    
 
 # =========================================================
 # FORGOT PASSWORD - SEND OTP
