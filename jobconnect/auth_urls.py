@@ -4,14 +4,14 @@ from adminpanel.views import (
     ForgotPasswordView,
     VerifyOTPView,
     ResetPasswordView,
-    LoginView,
+    CommonLoginView,
 )
 
 
 urlpatterns = [
     path(
         "login/",
-        LoginView.as_view(),
+        CommonLoginView.as_view(),
         name="login"
     ),
 
