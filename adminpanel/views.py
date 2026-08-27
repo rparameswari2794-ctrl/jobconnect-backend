@@ -7,6 +7,7 @@ from django.conf import settings
 from django.utils import timezone
 from .permissions import IsAdminUserRole
 
+
 from datetime import timedelta
 from secrets import randbelow
 
@@ -30,10 +31,10 @@ from django.conf import settings
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-# =========================================================
-# COMMON LOGIN
-# Email/Password + Google Login
-# =========================================================
+
+
+User = get_user_model()
+
 
 class CommonLoginView(APIView):
 
@@ -45,19 +46,28 @@ class CommonLoginView(APIView):
         # GOOGLE LOGIN
         # =====================================================
 
-        google_token = request.data.get(
-            "google_token"
-        )
+        google_token = request.data.get("google_token")
 
         if google_token:
 
+            password = request.data.get(
+                "password",
+                ""
+            ).strip()
+
+            password_confirmation = request.data.get(
+                "password_confirmation",
+                ""
+            ).strip()
+
             return self.google_login(
-                google_token
+                google_token,
+                password,
+                password_confirmation
             )
 
         # =====================================================
-        # GET LOGIN DATA
-        # EXISTING FUNCTIONALITY - UNCHANGED
+        # NORMAL EMAIL/PASSWORD LOGIN
         # =====================================================
 
         email = request.data.get(
@@ -74,7 +84,6 @@ class CommonLoginView(APIView):
 
         # =====================================================
         # VALIDATION
-        # EXISTING FUNCTIONALITY - UNCHANGED
         # =====================================================
 
         if not email or not password:
@@ -88,8 +97,7 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # FIND USER BY EMAIL
-        # EXISTING FUNCTIONALITY - UNCHANGED
+        # FIND USER
         # =====================================================
 
         try:
@@ -109,8 +117,7 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # AUTHENTICATE PASSWORD
-        # EXISTING FUNCTIONALITY - UNCHANGED
+        # AUTHENTICATE
         # =====================================================
 
         user = authenticate(
@@ -129,202 +136,23 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # DETERMINE ROLE
-        # EXISTING FUNCTIONALITY - UNCHANGED
+        # RETURN NORMAL LOGIN
         # =====================================================
 
-        role = None
-
-        name = (
-            user.get_full_name()
-            or user.username
-            or user.email
-        )
-
-        approval_status = None
-
-        profile_completed = False
-
-        company_name = None
-
-        # =====================================================
-        # ADMIN
-        # =====================================================
-
-        if user.is_superuser or user.is_staff:
-
-            role = "admin"
-
-            name = (
-                user.get_full_name()
-                or user.username
-                or "Admin"
-            )
-
-            approval_status = "approved"
-
-            profile_completed = True
-
-        # =====================================================
-        # EMPLOYER
-        # =====================================================
-
-        elif hasattr(
+        return self.create_login_response(
             user,
-            "employer_profile"
-        ):
-
-            profile = user.employer_profile
-
-            role = "employer"
-
-            name = (
-                profile.contact_name
-                or profile.company_name
-                or user.username
-            )
-
-            company_name = (
-                profile.company_name
-                or ""
-            )
-
-            approval_status = (
-                profile.approval_status
-            )
-
-            profile_completed = (
-                profile.profile_completed
-            )
-
-        # =====================================================
-        # JOB SEEKER
-        # =====================================================
-
-        elif hasattr(
-            user,
-            "jobseeker_profile"
-        ):
-
-            profile = user.jobseeker_profile
-
-            role = "jobseeker"
-
-            name = (
-                profile.full_name
-                or user.username
-            )
-
-            approval_status = (
-                profile.approval_status
-            )
-
-            profile_completed = (
-                profile.profile_completed
-            )
-
-        # =====================================================
-        # UNKNOWN USER
-        # EXISTING FUNCTIONALITY - UNCHANGED
-        # =====================================================
-
-        else:
-
-            return Response(
-                {
-                    "detail":
-                        "User role could not be determined."
-                },
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        # =====================================================
-        # JWT
-        # EXISTING FUNCTIONALITY - UNCHANGED
-        # =====================================================
-
-        refresh = RefreshToken.for_user(
-            user
-        )
-
-        access_token = str(
-            refresh.access_token
-        )
-
-        refresh_token = str(
-            refresh
-        )
-
-        # =====================================================
-        # USER RESPONSE
-        # EXISTING FUNCTIONALITY - UNCHANGED
-        # =====================================================
-
-        user_data = {
-
-            "id":
-                user.id,
-
-            "name":
-                name,
-
-            "username":
-                user.username,
-
-            "email":
-                user.email,
-
-            "role":
-                role,
-
-            "approval_status":
-                approval_status,
-
-            "profile_completed":
-                profile_completed,
-        }
-
-        # =====================================================
-        # EMPLOYER COMPANY NAME
-        # EXISTING FUNCTIONALITY - UNCHANGED
-        # =====================================================
-
-        if role == "employer":
-
-            user_data["company_name"] = (
-                company_name
-            )
-
-        # =====================================================
-        # RESPONSE
-        # EXISTING FUNCTIONALITY - UNCHANGED
-        # =====================================================
-
-        return Response(
-            {
-                "message":
-                    "Login successful.",
-
-                "access":
-                    access_token,
-
-                "refresh":
-                    refresh_token,
-
-                "user":
-                    user_data,
-            },
-            status=status.HTTP_200_OK
+            "Login successful."
         )
 
     # =========================================================
     # GOOGLE LOGIN
-    # NEW FUNCTIONALITY ONLY
     # =========================================================
 
     def google_login(
         self,
-        google_token
+        google_token,
+        password="",
+        password_confirmation=""
     ):
 
         # =====================================================
@@ -348,7 +176,7 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # VERIFY GOOGLE ID TOKEN
+        # VERIFY GOOGLE TOKEN
         # =====================================================
 
         try:
@@ -391,7 +219,7 @@ class CommonLoginView(APIView):
         # =====================================================
 
         google_email = google_user.get(
-            "email"
+            "email",""
         )
 
         email_verified = google_user.get(
@@ -410,7 +238,7 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # CHECK VERIFIED EMAIL
+        # EMAIL VERIFICATION
         # =====================================================
 
         if not email_verified:
@@ -430,7 +258,7 @@ class CommonLoginView(APIView):
         )
 
         # =====================================================
-        # FIND EXISTING JOB CONNECT USER
+        # FIND EXISTING USER
         # =====================================================
 
         try:
@@ -439,19 +267,145 @@ class CommonLoginView(APIView):
                 email__iexact=google_email
             )
 
+            # =================================================
+            # EXISTING ACCOUNT
+            # =================================================
+
+            return self.create_login_response(
+                user,
+                "Google login successful."
+            )
+
         except User.DoesNotExist:
 
-            return Response(
-                {
-                    "detail":
-                        "No Job Connect account exists with this Google email. Please create an account first."
-                },
-                status=status.HTTP_404_NOT_FOUND
+            # =================================================
+            # NEW GOOGLE USER
+            # =================================================
+
+            # First request:
+            # ask frontend to show password modal.
+
+            if not password:
+
+                return Response(
+                    {
+                        "new_google_user": True,
+                        "detail":
+                            "Please create a password for your Job Connect account."
+                    },
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # =================================================
+            # PASSWORD CONFIRMATION
+            # =================================================
+
+            if not password_confirmation:
+
+                return Response(
+                    {
+                        "detail":
+                            "Please confirm your password."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # =================================================
+            # PASSWORD MATCH
+            # =================================================
+
+            if password != password_confirmation:
+
+                return Response(
+                    {
+                        "detail":
+                            "Passwords do not match."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # =================================================
+            # PASSWORD LENGTH
+            # =================================================
+
+            if len(password) < 8:
+
+                return Response(
+                    {
+                        "detail":
+                            "Password must be at least 8 characters."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # =================================================
+            # CREATE DJANGO USER
+            # =================================================
+
+            username = google_email.strip().lower()
+
+            user = User(
+                username=username,
+                email=google_email,
+                first_name=google_user.get(
+                    "given_name",
+                    ""
+                ),
+                last_name=google_user.get(
+                    "family_name",
+                    ""
+                )
             )
+
+            # IMPORTANT:
+            # Django hashes the password.
+
+            user.set_password(password)
+
+            user.save()
+
+            # =================================================
+            # CREATE JOB SEEKER PROFILE
+            # =================================================
+
+            # IMPORTANT:
+            #
+            # Put your existing JobSeekerProfile creation
+            # code here.
+            #
+            # Example ONLY:
+            #
+            # from jobseeker.models import JobSeekerProfile
+            #
+            # JobSeekerProfile.objects.create(
+            #     user=user,
+            #     full_name=google_user.get(
+            #         "name",
+            #         google_email.split("@")[0]
+            #     )
+            # )
+
+            # =================================================
+            # LOGIN NEW USER
+            # =================================================
+
+            return self.create_login_response(
+                user,
+                "Google account created successfully."
+            )
+
+    # =========================================================
+    # COMMON LOGIN RESPONSE
+    # =========================================================
+
+    def create_login_response(
+        self,
+        user,
+        message
+    ):
 
         # =====================================================
         # DETERMINE ROLE
-        # SAME EXISTING LOGIC
         # =====================================================
 
         role = None
@@ -545,7 +499,7 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # UNKNOWN USER
+        # UNKNOWN
         # =====================================================
 
         else:
@@ -559,7 +513,7 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # CREATE JWT
+        # JWT
         # =====================================================
 
         refresh = RefreshToken.for_user(
@@ -613,14 +567,14 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # GOOGLE LOGIN RESPONSE
-        # SAME JWT FORMAT AS NORMAL LOGIN
+        # RESPONSE
         # =====================================================
 
         return Response(
             {
+
                 "message":
-                    "Google login successful.",
+                    message,
 
                 "access":
                     access_token,
@@ -630,6 +584,7 @@ class CommonLoginView(APIView):
 
                 "user":
                     user_data,
+
             },
             status=status.HTTP_200_OK
         )
@@ -637,6 +592,7 @@ class CommonLoginView(APIView):
 # =========================================================
 # FORGOT PASSWORD - SEND OTP
 # =========================================================
+
 @method_decorator(csrf_exempt, name="dispatch")
 class ForgotPasswordView(APIView):
 
@@ -645,7 +601,14 @@ class ForgotPasswordView(APIView):
 
     def post(self, request):
 
-        email = request.data.get("email", "")
+        # =====================================================
+        # GET EMAIL
+        # =====================================================
+
+        email = request.data.get(
+            "email",
+            ""
+        )
 
         email = email.strip().lower()
 
@@ -678,7 +641,7 @@ class ForgotPasswordView(APIView):
             return Response(
                 {
                     "detail":
-                        "No account found with this email address."
+                        "No Job Connect account exists with this email address."
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
@@ -689,7 +652,9 @@ class ForgotPasswordView(APIView):
 
         role = None
 
+        # =====================================================
         # JOB SEEKER
+        # =====================================================
 
         try:
 
@@ -701,7 +666,9 @@ class ForgotPasswordView(APIView):
 
             pass
 
+        # =====================================================
         # EMPLOYER
+        # =====================================================
 
         if role is None:
 
@@ -756,14 +723,16 @@ class ForgotPasswordView(APIView):
 
             otp=otp,
 
-            expires_at=timezone.now()
-            + timedelta(minutes=10),
+            expires_at=(
+                timezone.now()
+                + timedelta(minutes=10)
+            ),
 
             is_verified=False,
         )
 
         # =====================================================
-        # EMAIL
+        # SEND EMAIL
         # =====================================================
 
         send_mail(

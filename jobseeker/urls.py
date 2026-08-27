@@ -46,6 +46,7 @@ urlpatterns = [
         JobSeekerLoginView.as_view(),
         name="jobseeker-login"
     ),
+    
 
 
     # =====================================================
