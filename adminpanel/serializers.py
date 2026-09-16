@@ -8,15 +8,9 @@ from jobseeker.models import (
 )
 
 
-# =========================================================
-# ADMIN - EDUCATION
-# =========================================================
-
 class AdminEducationSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Education
-
         fields = [
             "id",
             "degree",
@@ -30,15 +24,9 @@ class AdminEducationSerializer(serializers.ModelSerializer):
         ]
 
 
-# =========================================================
-# ADMIN - EXPERIENCE
-# =========================================================
-
 class AdminExperienceSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Experience
-
         fields = [
             "id",
             "job_title",
@@ -51,15 +39,9 @@ class AdminExperienceSerializer(serializers.ModelSerializer):
         ]
 
 
-# =========================================================
-# ADMIN - PROJECT
-# =========================================================
-
 class AdminProjectSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Project
-
         fields = [
             "id",
             "name",
@@ -70,51 +52,27 @@ class AdminProjectSerializer(serializers.ModelSerializer):
         ]
 
 
-# =========================================================
-# ADMIN - JOB SEEKER
-# =========================================================
-
 class AdminJobSeekerSerializer(serializers.ModelSerializer):
-
-    # -----------------------------------------------------
-    # USER EMAIL
-    # -----------------------------------------------------
 
     email = serializers.EmailField(
         source="user.email",
         read_only=True
     )
 
-    # -----------------------------------------------------
-    # EDUCATION
-    # -----------------------------------------------------
-
     educations = AdminEducationSerializer(
         many=True,
         read_only=True
     )
-
-    # -----------------------------------------------------
-    # EXPERIENCE
-    # -----------------------------------------------------
 
     experiences = AdminExperienceSerializer(
         many=True,
         read_only=True
     )
 
-    # -----------------------------------------------------
-    # PROJECTS
-    # -----------------------------------------------------
-
     projects = AdminProjectSerializer(
         many=True,
         read_only=True
     )
-
-    # -----------------------------------------------------
-    # DOCUMENT URLs
-    # -----------------------------------------------------
 
     aadhaar = serializers.FileField(
         read_only=True,
@@ -131,62 +89,46 @@ class AdminJobSeekerSerializer(serializers.ModelSerializer):
         allow_null=True
     )
 
+    disability_certificate = serializers.FileField(
+        read_only=True,
+        allow_null=True
+    )
+
     class Meta:
 
         model = JobSeekerProfile
 
         fields = [
-
-            # =================================================
-            # ID
-            # =================================================
-
             "id",
-
-            # =================================================
-            # PERSONAL INFORMATION
-            # =================================================
-
             "full_name",
             "email",
             "phone",
             "location",
             "linkedin",
             "headline",
-
-            # =================================================
-            # PROFESSIONAL INFORMATION
-            # =================================================
-
             "skills",
 
-            # =================================================
-            # DETAILED INFORMATION
-            # =================================================
+            # Disability
+            "disability",
+            "disability_category",
+            "disability_type",
+            "disability_percentage",
+            "disability_certificate",
 
+            # Education / Experience / Projects
             "educations",
             "experiences",
             "projects",
 
-            # =================================================
-            # DOCUMENTS
-            # =================================================
-
+            # Documents
             "aadhaar",
             "resume",
             "profile_photo",
 
-            # =================================================
-            # VERIFICATION
-            # =================================================
-
+            # Approval
             "approval_status",
             "rejection_reason",
             "profile_completed",
-
-            # =================================================
-            # DATES
-            # =================================================
 
             "created_at",
             "updated_at",
@@ -201,7 +143,9 @@ class AdminJobSeekerSerializer(serializers.ModelSerializer):
             "aadhaar",
             "resume",
             "profile_photo",
+            "disability_certificate",
             "created_at",
             "updated_at",
         ]
+
 

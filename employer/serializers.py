@@ -1,3 +1,4 @@
+
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 
@@ -5,6 +6,57 @@ from rest_framework import serializers
 
 from .models import EmployerProfile, Job
 from jobseeker.models import JobApplication
+from jobseeker.serializers import JobSeekerProfileSerializer
+
+
+# =========================================================
+# EMPLOYER APPLICANT DETAIL
+# =========================================================
+
+class EmployerApplicantDetailSerializer(serializers.ModelSerializer):
+
+    jobseeker = JobSeekerProfileSerializer(
+        read_only=True
+    )
+
+    job_title = serializers.CharField(
+        source="job.title",
+        read_only=True
+    )
+
+    company_name = serializers.CharField(
+        source="job.employer.company_name",
+        read_only=True
+    )
+
+    applied_at = serializers.DateTimeField(
+        read_only=True
+    )
+
+    status = serializers.CharField(
+        read_only=True
+    )
+
+    class Meta:
+        model = JobApplication
+
+        fields = [
+            "id",
+            "status",
+            "applied_at",
+            "job_title",
+            "company_name",
+            "jobseeker",
+        ]
+
+        read_only_fields = [
+            "id",
+            "status",
+            "applied_at",
+            "job_title",
+            "company_name",
+            "jobseeker",
+        ]
 
 
 # =========================================================
@@ -76,38 +128,58 @@ class EmployerSignupSerializer(serializers.Serializer):
 # EMPLOYER PROFILE
 # =========================================================
 
-class EmployerProfileSerializer(serializers.ModelSerializer):
+class EmployerProfileSerializer(
+    serializers.ModelSerializer
+):
 
     class Meta:
 
         model = EmployerProfile
 
         fields = [
+
             "id",
+
             "company_name",
             "contact_name",
             "representative_position",
+
             "phone",
             "company_email",
+
             "company_description",
+
             "website",
             "location",
+
             "company_logo",
+
             "company_gst_certificate",
+
             "company_registration_certificate",
+
             "authorization_letter",
+
             "profile_completed",
+
             "approval_status",
+
             "rejection_reason",
+
             "created_at",
             "updated_at",
         ]
 
         read_only_fields = [
+
             "id",
+
             "profile_completed",
+
             "approval_status",
+
             "rejection_reason",
+
             "created_at",
             "updated_at",
         ]
@@ -134,7 +206,8 @@ class EmployerProfileSerializer(serializers.ModelSerializer):
         )
 
         requires_authorization = (
-            representative_position not in [
+            representative_position
+            not in [
                 "",
                 "director",
                 "ceo",
@@ -149,6 +222,7 @@ class EmployerProfileSerializer(serializers.ModelSerializer):
         ):
 
             raise serializers.ValidationError({
+
                 "authorization_letter":
                     "Authorization Letter is required when "
                     "the representative is not a Director, CEO, "
@@ -157,49 +231,54 @@ class EmployerProfileSerializer(serializers.ModelSerializer):
 
         return attrs
 
-    def update(self, instance, validated_data):
+    def update(
+        self,
+        instance,
+        validated_data
+    ):
 
-        was_approved = (
-            instance.approval_status == "approved"
-        )
+        # Update only supplied fields
 
         for attr, value in validated_data.items():
-            setattr(instance, attr, value)
 
-        if was_approved:
+            setattr(
+                instance,
+                attr,
+                value
+            )
 
-            instance.approval_status = "pending"
-            instance.profile_completed = True
-            instance.rejection_reason = ""
+        # Any profile modification requires
+        # admin approval again.
 
-        else:
+        instance.approval_status = "pending"
 
-            instance.approval_status = "pending"
-            instance.profile_completed = True
-            instance.rejection_reason = ""
+        instance.rejection_reason = ""
 
         instance.save()
 
         return instance
 
 
-# =========================================================
-# JOB SERIALIZER
-# =========================================================
+
 
 # =========================================================
 # JOB SERIALIZER
 # =========================================================
 
-class JobSerializer(serializers.ModelSerializer):
+class JobSerializer(
+    serializers.ModelSerializer
+):
 
     applicants_count = serializers.SerializerMethodField()
 
     class Meta:
+
         model = Job
 
         fields = [
+
             "id",
+
             "employer",
 
             "title",
@@ -209,19 +288,24 @@ class JobSerializer(serializers.ModelSerializer):
 
             "job_type",
             "work_mode",
+            "is_disability_job",
 
             "experience",
+
             "minimum_experience",
             "maximum_experience",
 
             "education_details",
+
             "roles_responsibilities",
+
             "key_features",
 
             "salary_min",
             "salary_max",
 
             "status",
+
             "is_active",
 
             "applicants_count",
@@ -231,16 +315,26 @@ class JobSerializer(serializers.ModelSerializer):
         ]
 
         read_only_fields = [
+
             "id",
+
             "employer",
+
             "status",
+
             "is_active",
+
             "applicants_count",
+
             "created_at",
             "updated_at",
         ]
 
-    def get_applicants_count(self, obj):
+    def get_applicants_count(
+        self,
+        obj
+    ):
+
         return JobApplication.objects.filter(
             job=obj
         ).count()
@@ -263,9 +357,10 @@ class JobSerializer(serializers.ModelSerializer):
             if minimum_experience > maximum_experience:
 
                 raise serializers.ValidationError({
+
                     "maximum_experience":
-                        "Maximum experience must be greater than "
-                        "or equal to minimum experience."
+                        "Maximum experience must be greater "
+                        "than or equal to minimum experience."
                 })
 
         return attrs

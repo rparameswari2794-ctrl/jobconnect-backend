@@ -6,7 +6,6 @@ from .views import (
     EmployerJobListCreateView,
     EmployerDashboardView,
     EmployerApplicantsView,
-    EmployerApplicantProfileView,
     EmployerApplicantDetailView,
     EmployerApplicationStatusView,
     EmployerCloseJobView,
@@ -14,6 +13,11 @@ from .views import (
     EmployerLoginView,
     EmployerResetPasswordView,
     EmployerVerifyOTPView,
+    EmployerNotificationListView,
+    EmployerNotificationReadView,
+    EmployerMarkAllNotificationsReadView,
+    EmployerNotificationDeleteView,
+
 )
 
 
@@ -139,5 +143,32 @@ urlpatterns = [
         "jobs/<int:job_id>/close/",
         EmployerCloseJobView.as_view(),
         name="employer-close-job"
+    ),
+    # =========================================================
+    # NOTIFICATIONS
+    # =========================================================
+
+    path(
+        "notifications/",
+        EmployerNotificationListView.as_view(),
+        name="employer-notification-list",
+    ),
+
+    path(
+        "notifications/read-all/",
+        EmployerMarkAllNotificationsReadView.as_view(),
+        name="employer-notification-read-all",
+    ),
+
+    path(
+        "notifications/<int:notification_id>/read/",
+        EmployerNotificationReadView.as_view(),
+        name="employer-notification-read",
+    ),
+
+    path(
+        "notifications/<int:notification_id>/",
+        EmployerNotificationDeleteView.as_view(),
+        name="employer-notification-delete",
     ),
 ]

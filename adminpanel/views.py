@@ -6,6 +6,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.utils import timezone
 from .permissions import IsAdminUserRole
+from django.db.models import Q
 
 
 from datetime import timedelta
@@ -15,12 +16,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from adminpanel.models import PasswordResetOTP
-from jobseeker.models import JobSeekerProfile
-from employer.models import EmployerProfile
+from jobseeker.models import JobSeekerProfile, Notification
+from employer.models import EmployerProfile, Job
 from adminpanel.serializers import AdminJobSeekerSerializer
 
 from jobconnect.authentication import authenticate_by_email
@@ -36,9 +38,14 @@ from google.auth.transport import requests as google_requests
 User = get_user_model()
 
 
+
 class CommonLoginView(APIView):
 
     permission_classes = [AllowAny]
+
+    # =========================================================
+    # POST
+    # =========================================================
 
     def post(self, request):
 
@@ -46,7 +53,9 @@ class CommonLoginView(APIView):
         # GOOGLE LOGIN
         # =====================================================
 
-        google_token = request.data.get("google_token")
+        google_token = request.data.get(
+            "google_token"
+        )
 
         if google_token:
 
@@ -60,10 +69,24 @@ class CommonLoginView(APIView):
                 ""
             ).strip()
 
+            # Role is sent by the signup page.
+            #
+            # jobseeker signup:
+            # role = "jobseeker"
+            #
+            # employer signup:
+            # role = "employer"
+
+            role = request.data.get(
+                "role",
+                "jobseeker"
+            )
+
             return self.google_login(
                 google_token,
                 password,
-                password_confirmation
+                password_confirmation,
+                role
             )
 
         # =====================================================
@@ -152,8 +175,44 @@ class CommonLoginView(APIView):
         self,
         google_token,
         password="",
-        password_confirmation=""
+        password_confirmation="",
+        role="jobseeker"
     ):
+
+        # =====================================================
+        # NORMALIZE ROLE
+        # =====================================================
+
+        role = (
+            role
+            or "jobseeker"
+        ).strip().lower()
+
+        # Allow common variations.
+        if role in [
+            "job_seeker",
+            "job-seeker",
+            "job seeker"
+        ]:
+
+            role = "jobseeker"
+
+        # =====================================================
+        # VALIDATE ROLE
+        # =====================================================
+
+        if role not in [
+            "jobseeker",
+            "employer"
+        ]:
+
+            return Response(
+                {
+                    "detail":
+                        "Invalid account role."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # =====================================================
         # GOOGLE CLIENT ID
@@ -181,12 +240,10 @@ class CommonLoginView(APIView):
 
         try:
 
-            google_user = (
-                id_token.verify_oauth2_token(
-                    google_token,
-                    google_requests.Request(),
-                    google_client_id
-                )
+            google_user = id_token.verify_oauth2_token(
+                google_token,
+                google_requests.Request(),
+                google_client_id
             )
 
         except ValueError:
@@ -219,13 +276,18 @@ class CommonLoginView(APIView):
         # =====================================================
 
         google_email = google_user.get(
-            "email",""
+            "email",
+            ""
         )
 
         email_verified = google_user.get(
             "email_verified",
             False
         )
+
+        # =====================================================
+        # EMAIL REQUIRED
+        # =====================================================
 
         if not google_email:
 
@@ -251,10 +313,34 @@ class CommonLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # =====================================================
+        # NORMALIZE EMAIL
+        # =====================================================
+
         google_email = (
             google_email
             .strip()
             .lower()
+        )
+
+        # =====================================================
+        # GOOGLE NAME
+        # =====================================================
+
+        google_name = (
+
+            google_user.get(
+                "name"
+            )
+
+            or (
+
+                f"{google_user.get('given_name', '')} "
+                f"{google_user.get('family_name', '')}"
+
+            ).strip()
+
+            or google_email.split("@")[0]
         )
 
         # =====================================================
@@ -270,6 +356,13 @@ class CommonLoginView(APIView):
             # =================================================
             # EXISTING ACCOUNT
             # =================================================
+            #
+            # IMPORTANT:
+            # Do NOT change an existing user's role based
+            # on the signup page.
+            #
+            # create_login_response() determines the real
+            # role from the user's profile.
 
             return self.create_login_response(
                 user,
@@ -281,17 +374,24 @@ class CommonLoginView(APIView):
             # =================================================
             # NEW GOOGLE USER
             # =================================================
-
-            # First request:
-            # ask frontend to show password modal.
+            #
+            # First request from signup page does not contain
+            # a password.
+            #
+            # Tell frontend to display the password form.
 
             if not password:
 
                 return Response(
                     {
-                        "new_google_user": True,
+                        "new_google_user":
+                            True,
+
                         "detail":
-                            "Please create a password for your Job Connect account."
+                            "Please create a password for your Job Connect account.",
+
+                        "role":
+                            role
                     },
                     status=status.HTTP_409_CONFLICT
                 )
@@ -342,51 +442,73 @@ class CommonLoginView(APIView):
             # CREATE DJANGO USER
             # =================================================
 
-            username = google_email.strip().lower()
+            username = google_email
 
             user = User(
                 username=username,
                 email=google_email,
+
                 first_name=google_user.get(
                     "given_name",
                     ""
                 ),
+
                 last_name=google_user.get(
                     "family_name",
                     ""
                 )
             )
 
-            # IMPORTANT:
-            # Django hashes the password.
+            # =================================================
+            # HASH PASSWORD
+            # =================================================
 
-            user.set_password(password)
+            user.set_password(
+                password
+            )
 
             user.save()
 
             # =================================================
-            # CREATE JOB SEEKER PROFILE
+            # CREATE JOBSEEKER PROFILE
             # =================================================
 
-            # IMPORTANT:
-            #
-            # Put your existing JobSeekerProfile creation
-            # code here.
-            #
-            # Example ONLY:
-            #
-            # from jobseeker.models import JobSeekerProfile
-            #
-            # JobSeekerProfile.objects.create(
-            #     user=user,
-            #     full_name=google_user.get(
-            #         "name",
-            #         google_email.split("@")[0]
-            #     )
-            # )
+            if role == "jobseeker":
+
+                JobSeekerProfile.objects.create(
+
+                    user=user,
+
+                    full_name=google_name,
+
+                    approval_status="pending",
+
+                    profile_completed=False
+                )
 
             # =================================================
-            # LOGIN NEW USER
+            # CREATE EMPLOYER PROFILE
+            # =================================================
+
+            elif role == "employer":
+
+                EmployerProfile.objects.create(
+
+                    user=user,
+
+                    company_name="",
+
+                    contact_name=google_name,
+
+                    company_email=google_email,
+
+                    approval_status="pending",
+
+                    profile_completed=False
+                )
+
+            # =================================================
+            # LOGIN NEW GOOGLE USER
             # =================================================
 
             return self.create_login_response(
@@ -454,21 +576,28 @@ class CommonLoginView(APIView):
             role = "employer"
 
             name = (
+
                 profile.contact_name
+
                 or profile.company_name
+
                 or user.username
             )
 
             company_name = (
+
                 profile.company_name
+
                 or ""
             )
 
             approval_status = (
+
                 profile.approval_status
             )
 
             profile_completed = (
+
                 profile.profile_completed
             )
 
@@ -486,20 +615,24 @@ class CommonLoginView(APIView):
             role = "jobseeker"
 
             name = (
+
                 profile.full_name
+
                 or user.username
             )
 
             approval_status = (
+
                 profile.approval_status
             )
 
             profile_completed = (
+
                 profile.profile_completed
             )
 
         # =====================================================
-        # UNKNOWN
+        # UNKNOWN ROLE
         # =====================================================
 
         else:
@@ -513,16 +646,24 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # JWT
+        # CREATE JWT REFRESH TOKEN
         # =====================================================
 
         refresh = RefreshToken.for_user(
             user
         )
 
+        # =====================================================
+        # CREATE ACCESS TOKEN
+        # =====================================================
+
         access_token = str(
             refresh.access_token
         )
+
+        # =====================================================
+        # CREATE REFRESH TOKEN
+        # =====================================================
 
         refresh_token = str(
             refresh
@@ -557,7 +698,7 @@ class CommonLoginView(APIView):
         }
 
         # =====================================================
-        # EMPLOYER COMPANY
+        # EMPLOYER COMPANY NAME
         # =====================================================
 
         if role == "employer":
@@ -567,7 +708,7 @@ class CommonLoginView(APIView):
             )
 
         # =====================================================
-        # RESPONSE
+        # FINAL RESPONSE
         # =====================================================
 
         return Response(
@@ -584,8 +725,8 @@ class CommonLoginView(APIView):
 
                 "user":
                     user_data,
-
             },
+
             status=status.HTTP_200_OK
         )
 
@@ -1121,140 +1262,77 @@ class ResetPasswordView(APIView):
 
 class AdminDashboardView(APIView):
 
+    authentication_classes = [JWTAuthentication]
+
     permission_classes = [
-        IsAuthenticated,
-        IsAdminUserRole
+        IsAuthenticated
     ]
 
     def get(self, request):
 
         # =====================================================
-        # JOB SEEKERS
+        # ADMIN CHECK
         # =====================================================
 
-        # Only APPROVED job seekers
-        total_jobseekers = (
-            JobSeekerProfile.objects
-            .filter(
-                approval_status="approved"
+        if not request.user.is_staff:
+
+            return Response(
+                {
+                    "detail":
+                        "You do not have permission to access the admin dashboard."
+                },
+                status=status.HTTP_403_FORBIDDEN
             )
-            .count()
-        )
-
-        # Pending job seekers
-        pending_jobseekers = (
-            JobSeekerProfile.objects
-            .filter(
-                approval_status="pending",
-                profile_completed=True
-            )
-            .count()
-        )
-
-        # Approved job seekers
-        approved_jobseekers = (
-            JobSeekerProfile.objects
-            .filter(
-                approval_status="approved"
-            )
-            .count()
-        )
-
-        # Rejected job seekers
-        rejected_jobseekers = (
-            JobSeekerProfile.objects
-            .filter(
-                approval_status="rejected"
-            )
-            .count()
-        )
 
         # =====================================================
-        # EMPLOYERS
+        # TOTAL USERS
         # =====================================================
 
-        # Only APPROVED employers
-        total_employers = (
-            EmployerProfile.objects
-            .filter(
-                approval_status="approved"
-            )
-            .count()
-        )
-
-        # Pending employers
-        pending_employers = (
-            EmployerProfile.objects
-            .filter(
-                approval_status="pending"
-            )
-            .count()
-        )
-
-        # Approved employers
-        approved_employers = (
-            EmployerProfile.objects
-            .filter(
-                approval_status="approved"
-            )
-            .count()
-        )
-
-        # Rejected employers
-        rejected_employers = (
-            EmployerProfile.objects
-            .filter(
-                approval_status="rejected"
-            )
-            .count()
-        )
+        total_users = User.objects.filter(
+            is_active=True
+        ).count()
 
         # =====================================================
-        # TOTAL PENDING VERIFICATIONS
+        # TOTAL JOB SEEKERS
         # =====================================================
 
-        pending_verifications = (
-            pending_jobseekers +
-            pending_employers
-        )
+        total_jobseekers = JobSeekerProfile.objects.count()
 
         # =====================================================
-        # TOTAL NON-ADMIN USERS
+        # TOTAL EMPLOYERS
         # =====================================================
 
-        total_users = (
-            User.objects
-            .filter(
-                is_staff=False,
-                is_superuser=False
-            )
-            .count()
-        )
+        total_employers = EmployerProfile.objects.count()
 
         # =====================================================
-        # APPROVED ACCOUNTS
+        # TOTAL JOB POSTS
         # =====================================================
 
-        approved_accounts = (
-            approved_jobseekers +
-            approved_employers
-        )
+        total_jobs = Job.objects.count()
 
         # =====================================================
-        # REJECTED ACCOUNTS
+        # ACTIVE JOB POSTS
         # =====================================================
 
-        rejected_accounts = (
-            rejected_jobseekers +
-            rejected_employers
-        )
+        active_jobs = Job.objects.filter(
+            is_active=True
+        ).count()
 
         # =====================================================
-        # LIVE JOB POSTS
+        # CLOSED JOB POSTS
         # =====================================================
 
-        # Change this later when Job model is connected
-        live_job_posts = 0
+        closed_jobs = Job.objects.filter(
+            is_active=False
+        ).count()
+
+        # =====================================================
+        # DISABILITY USERS
+        # =====================================================
+
+        disability_users = JobSeekerProfile.objects.filter(
+            disability=True
+        ).count()
 
         # =====================================================
         # RESPONSE
@@ -1262,29 +1340,8 @@ class AdminDashboardView(APIView):
 
         return Response(
             {
-                # -------------------------------------------------
-                # VERIFICATION
-                # -------------------------------------------------
-
-                "pending_verifications":
-                    pending_verifications,
-
-                "pending_jobseekers":
-                    pending_jobseekers,
-
-                "pending_employers":
-                    pending_employers,
-
-                # -------------------------------------------------
-                # USERS
-                # -------------------------------------------------
-
                 "total_users":
                     total_users,
-
-                # -------------------------------------------------
-                # APPROVED JOB SEEKERS / EMPLOYERS
-                # -------------------------------------------------
 
                 "total_jobseekers":
                     total_jobseekers,
@@ -1292,37 +1349,28 @@ class AdminDashboardView(APIView):
                 "total_employers":
                     total_employers,
 
-                "approved_jobseekers":
-                    approved_jobseekers,
+                "total_jobs":
+                    total_jobs,
 
-                "approved_employers":
-                    approved_employers,
+                "active_jobs":
+                    active_jobs,
 
-                # -------------------------------------------------
-                # REJECTED
-                # -------------------------------------------------
+                "closed_jobs":
+                    closed_jobs,
 
-                "rejected_jobseekers":
-                    rejected_jobseekers,
+                "disability_users":
+                    disability_users,
 
-                "rejected_employers":
-                    rejected_employers,
-
-                "approved_accounts":
-                    approved_accounts,
-
-                "rejected_accounts":
-                    rejected_accounts,
-
-                # -------------------------------------------------
-                # JOBS
-                # -------------------------------------------------
+                # Backward-compatible names
+                "disabled_jobseekers":
+                    disability_users,
 
                 "live_job_posts":
-                    live_job_posts,
+                    active_jobs,
             },
             status=status.HTTP_200_OK
         )
+    
 # =========================================================
 # ADMIN - VERIFICATION QUEUE
 # =========================================================
@@ -1331,85 +1379,128 @@ class AdminVerificationQueueView(APIView):
 
     permission_classes = [
         IsAuthenticated,
-        IsAdminUserRole
+        IsAdminUserRole,
     ]
 
     def get(self, request):
 
-        submissions = []
+        verification_queue = []
 
         # =====================================================
-        # JOB SEEKERS
+        # PENDING JOB SEEKERS
         # =====================================================
 
         jobseekers = (
-            JobSeekerProfile.objects.filter(
-                profile_completed=True,
-                approval_status="pending")
+            JobSeekerProfile.objects
+            .filter(
+                approval_status="pending",
+                profile_completed=True
+            )
             .select_related("user")
-            .order_by("-created_at")
+            .order_by("-updated_at")
         )
 
         for profile in jobseekers:
 
-            submissions.append(
+            name = (
+                profile.full_name
+                or profile.user.get_full_name()
+                or profile.user.email
+            )
+
+            verification_queue.append(
                 {
                     "id": profile.id,
-
                     "type": "job seeker",
 
-                    "name": profile.full_name,
+                    "name": name,
 
                     "email": profile.user.email,
 
-                    "location": profile.location or "",
+                    "location": (
+                        profile.location or ""
+                    ),
 
-                    "submitted": profile.created_at,
+                    "submitted": profile.updated_at,
 
-                    "approval_status":
-                        profile.approval_status,
+                    "approval_status": (
+                        profile.approval_status
+                    ),
 
-                    "profile_completed":
-                        profile.profile_completed,
+                    "profile_completed": (
+                        profile.profile_completed
+                    ),
+
+                    # Disability
+                    "disability": bool(
+                        profile.disability
+                    ),
+
+                    "disability_category": (
+                        profile.disability_category or ""
+                    ),
+
+                    "disability_type": (
+                        profile.disability_type or ""
+                    ),
+
+                    "disability_percentage": (
+                        profile.disability_percentage
+                        if profile.disability_percentage
+                        is not None
+                        else None
+                    ),
                 }
             )
 
         # =====================================================
-        # EMPLOYERS
+        # PENDING EMPLOYERS
         # =====================================================
 
         employers = (
             EmployerProfile.objects
             .filter(
-                profile_completed=True,
-                approval_status="pending"
+                approval_status="pending",
+                profile_completed=True
             )
             .select_related("user")
-            .order_by("-created_at")
+            .order_by("-updated_at")
         )
 
         for profile in employers:
 
-            submissions.append(
+            name = (
+                profile.company_name
+                or profile.user.get_full_name()
+                or profile.user.email
+            )
+
+            verification_queue.append(
                 {
                     "id": profile.id,
-
                     "type": "employer",
 
-                    "name": profile.company_name,
+                    "name": name,
 
                     "email": profile.user.email,
 
-                    "location": getattr(
-                        profile,
-                        "location",
-                        ""
+                    "location": (
+                        getattr(
+                            profile,
+                            "location",
+                            ""
+                        ) or ""
                     ),
 
-                    "submitted": profile.created_at,
+                    "submitted": profile.updated_at,
 
-                    "approval_status":
-                        profile.approval_status,
+                    "approval_status": (
+                        profile.approval_status
+                    ),
+
+                    "profile_completed": (
+                        profile.profile_completed
+                    ),
                 }
             )
 
@@ -1417,15 +1508,20 @@ class AdminVerificationQueueView(APIView):
         # SORT
         # =====================================================
 
-        submissions.sort(
-            key=lambda item: item["submitted"],
+        verification_queue.sort(
+            key=lambda item: (
+                item["submitted"]
+                if item["submitted"]
+                else timezone.now()
+            ),
             reverse=True
         )
 
         return Response(
-            submissions,
+            verification_queue,
             status=status.HTTP_200_OK
         )
+    
 
 # =========================================================
 # ADMIN - JOB SEEKER LIST
@@ -1435,7 +1531,7 @@ class AdminJobSeekerListView(APIView):
 
     permission_classes = [
         IsAuthenticated,
-        IsAdminUserRole
+        IsAdminUserRole,
     ]
 
     def get(self, request):
@@ -1452,19 +1548,21 @@ class AdminJobSeekerListView(APIView):
                 "experiences",
                 "projects"
             )
-            .order_by("-created_at")
+            .order_by("-updated_at")
         )
 
         serializer = AdminJobSeekerSerializer(
             jobseekers,
-            many=True
+            many=True,
+            context={
+                "request": request
+            }
         )
 
         return Response(
             serializer.data,
             status=status.HTTP_200_OK
         )
-
 
 # =========================================================
 # ADMIN - JOB SEEKER PROFILE
@@ -1474,7 +1572,7 @@ class AdminJobSeekerProfileView(APIView):
 
     permission_classes = [
         IsAuthenticated,
-        IsAdminUserRole
+        IsAdminUserRole,
     ]
 
     def get(self, request, pk):
@@ -1487,7 +1585,7 @@ class AdminJobSeekerProfileView(APIView):
                 .prefetch_related(
                     "educations",
                     "experiences",
-                    "projects",
+                    "projects"
                 )
                 .get(pk=pk)
             )
@@ -1497,20 +1595,61 @@ class AdminJobSeekerProfileView(APIView):
             return Response(
                 {
                     "message":
-                        "Job seeker not found."
+                    "Job seeker profile not found."
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
 
         serializer = AdminJobSeekerSerializer(
-            profile
+            profile,
+            context={
+                "request": request
+            }
         )
+
+        data = dict(serializer.data)
+
+        # Explicit disability data
+        data["disability"] = bool(
+            profile.disability
+        )
+
+        data["disability_category"] = (
+            profile.disability_category or ""
+        )
+
+        data["disability_type"] = (
+            profile.disability_type or ""
+        )
+
+        data["disability_percentage"] = (
+            profile.disability_percentage
+            if profile.disability_percentage is not None
+            else None
+        )
+
+        data["disability_details"] = {
+            "has_disability": bool(
+                profile.disability
+            ),
+            "category": (
+                profile.disability_category or ""
+            ),
+            "type": (
+                profile.disability_type or ""
+            ),
+            "percentage": (
+                profile.disability_percentage
+                if profile.disability_percentage
+                is not None
+                else None
+            ),
+        }
 
         return Response(
-            serializer.data,
+            data,
             status=status.HTTP_200_OK
         )
-
 
 # =========================================================
 # ADMIN - APPROVE JOB SEEKER
@@ -1520,16 +1659,15 @@ class AdminJobSeekerApproveView(APIView):
 
     permission_classes = [
         IsAuthenticated,
-        IsAdminUserRole
+        IsAdminUserRole,
     ]
 
-    def patch(self, request, pk):
+    def post(self, request, pk):
 
         try:
 
-            profile = (
-                JobSeekerProfile.objects
-                .get(pk=pk)
+            profile = JobSeekerProfile.objects.get(
+                pk=pk
             )
 
         except JobSeekerProfile.DoesNotExist:
@@ -1537,28 +1675,20 @@ class AdminJobSeekerApproveView(APIView):
             return Response(
                 {
                     "message":
-                        "Job seeker not found."
+                    "Job seeker profile not found."
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
-
-        # =====================================================
-        # PROFILE COMPLETION CHECK
-        # =====================================================
 
         if not profile.profile_completed:
 
             return Response(
                 {
                     "message":
-                        "Job seeker has not completed the profile."
+                    "Profile is not completed."
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-        # =====================================================
-        # APPROVE
-        # =====================================================
 
         profile.approval_status = "approved"
         profile.rejection_reason = ""
@@ -1567,22 +1697,29 @@ class AdminJobSeekerApproveView(APIView):
             update_fields=[
                 "approval_status",
                 "rejection_reason",
+                "updated_at",
             ]
         )
+
+        profile.refresh_from_db()
 
         return Response(
             {
                 "message":
-                    "Job seeker approved successfully.",
+                "Job seeker approved successfully.",
 
                 "id":
-                    profile.id,
+                profile.id,
 
                 "approval_status":
-                    profile.approval_status,
+                profile.approval_status,
+
+                "profile_completed":
+                profile.profile_completed,
             },
             status=status.HTTP_200_OK
         )
+    
 
 
 # =========================================================
@@ -1593,16 +1730,15 @@ class AdminJobSeekerRejectView(APIView):
 
     permission_classes = [
         IsAuthenticated,
-        IsAdminUserRole
+        IsAdminUserRole,
     ]
 
-    def patch(self, request, pk):
+    def post(self, request, pk):
 
         try:
 
-            profile = (
-                JobSeekerProfile.objects
-                .get(pk=pk)
+            profile = JobSeekerProfile.objects.get(
+                pk=pk
             )
 
         except JobSeekerProfile.DoesNotExist:
@@ -1610,66 +1746,67 @@ class AdminJobSeekerRejectView(APIView):
             return Response(
                 {
                     "message":
-                        "Job seeker not found."
+                    "Job seeker profile not found."
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # =====================================================
-        # REJECTION REASON
-        # =====================================================
+        rejection_reason = (
+            request.data.get(
+                "rejection_reason"
+            )
+            or ""
+        ).strip()
 
-        reason = request.data.get(
-            "rejection_reason",
-            ""
-        )
-
-        if not isinstance(reason, str):
-            reason = str(reason)
-
-        reason = reason.strip()
-
-        if not reason:
+        if not rejection_reason:
 
             return Response(
                 {
                     "message":
-                        "Rejection reason is required."
+                    "Rejection reason is required.",
+
+                    "errors": {
+                        "rejection_reason": [
+                            "Please provide a rejection reason."
+                        ]
+                    },
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # =====================================================
-        # REJECT
-        # =====================================================
-
         profile.approval_status = "rejected"
-        profile.rejection_reason = reason
+
+        profile.rejection_reason = (
+            rejection_reason
+        )
 
         profile.save(
             update_fields=[
                 "approval_status",
                 "rejection_reason",
+                "updated_at",
             ]
         )
+
+        profile.refresh_from_db()
 
         return Response(
             {
                 "message":
-                    "Job seeker rejected successfully.",
+                "Job seeker rejected successfully.",
 
                 "id":
-                    profile.id,
+                profile.id,
 
                 "approval_status":
-                    profile.approval_status,
+                profile.approval_status,
 
                 "rejection_reason":
-                    profile.rejection_reason,
+                profile.rejection_reason,
             },
             status=status.HTTP_200_OK
         )
-
+    
 
 # =========================================================
 # LOGIN
@@ -2092,30 +2229,307 @@ class AdminReportsFlagsView(APIView):
 
 
 class AdminUsersView(APIView):
+    """
+    Return ONLY approved/verified user profiles for the
+    Admin User Directory.
+
+    Pending verification profiles are intentionally excluded.
+
+    Important:
+    - Job seeker profiles are the source of truth for job seekers.
+    - Employer profiles are the source of truth for employers.
+    - Counts on the frontend are calculated from this exact list.
+    - Disability category and type are returned separately.
+    """
 
     permission_classes = [
         IsAuthenticated,
-        IsAdminUserRole
+        IsAdminUserRole,
     ]
 
     def get(self, request):
 
         users = []
 
-        # =====================================================
+        # ========================================================
         # APPROVED JOB SEEKERS
-        # =====================================================
+        # ========================================================
+        #
+        # Use iexact so "approved", "Approved", "APPROVED", etc.
+        # are treated consistently.
+        #
+        # Pending / rejected users are NOT included.
+        # ========================================================
 
         approved_jobseekers = (
             JobSeekerProfile.objects
             .filter(
-                approval_status="approved"
+                approval_status__iexact="approved"
             )
             .select_related("user")
-            .order_by("-updated_at")
+            .order_by("-updated_at", "-id")
         )
 
         for profile in approved_jobseekers:
+
+            if not profile.user:
+                continue
+
+            name = (
+                profile.full_name
+                or profile.user.get_full_name()
+                or profile.user.username
+                or profile.user.email
+                or "Unknown"
+            )
+
+            disability = bool(
+                profile.disability
+            )
+
+            disability_category = (
+                str(
+                    profile.disability_category or ""
+                ).strip()
+            )
+
+            disability_type = (
+                str(
+                    profile.disability_type or ""
+                ).strip()
+            )
+
+            # ----------------------------------------------------
+            # Cerebral Palsy belongs to Locomotor.
+            #
+            # Preserve the user's entered category when present.
+            # If the category is missing but the type is clearly
+            # Cerebral Palsy, return Locomotor as the category.
+            # ----------------------------------------------------
+
+            normalized_type = (
+                disability_type
+                .strip()
+                .lower()
+            )
+
+            if (
+                disability
+                and not disability_category
+                and "cerebral palsy" in normalized_type
+            ):
+                disability_category = "Locomotor"
+
+            users.append(
+                {
+                    "id": profile.id,
+                    "profile_id": profile.id,
+                    "user_id": profile.user.id,
+
+                    "name": name,
+                    "full_name": profile.full_name or "",
+                    "email": profile.user.email or "",
+
+                    "role": "job seeker",
+                    "user_role": "job seeker",
+
+                    "status": "Verified",
+                    "approval_status":
+                        profile.approval_status,
+
+                    "profile_completed":
+                        bool(
+                            profile.profile_completed
+                        ),
+
+                    "joined":
+                        profile.created_at,
+
+                    # ==========================================
+                    # DISABILITY
+                    # ==========================================
+
+                    "disability":
+                        disability,
+
+                    "has_disability":
+                        disability,
+
+                    "disability_category":
+                        disability_category,
+
+                    "disability_type":
+                        disability_type,
+
+                    "disability_percentage":
+                        (
+                            profile.disability_percentage
+                            if profile.disability_percentage
+                            is not None
+                            else None
+                        ),
+
+                    "disability_details": {
+                        "has_disability":
+                            disability,
+
+                        "category":
+                            disability_category,
+
+                        "type":
+                            disability_type,
+
+                        "percentage":
+                            (
+                                profile.disability_percentage
+                                if profile.disability_percentage
+                                is not None
+                                else None
+                            ),
+                    },
+                }
+            )
+
+        # ========================================================
+        # APPROVED EMPLOYERS
+        # ========================================================
+
+        approved_employers = (
+            EmployerProfile.objects
+            .filter(
+                approval_status__iexact="approved"
+            )
+            .select_related("user")
+            .order_by("-updated_at", "-id")
+        )
+
+        for profile in approved_employers:
+
+            if not profile.user:
+                continue
+
+            name = (
+                profile.company_name
+                or profile.contact_name
+                or profile.user.get_full_name()
+                or profile.user.username
+                or profile.user.email
+                or "Unknown"
+            )
+
+            users.append(
+                {
+                    "id": profile.id,
+                    "profile_id": profile.id,
+                    "user_id": profile.user.id,
+
+                    "name": name,
+                    "company_name":
+                        profile.company_name or "",
+                    "contact_name":
+                        getattr(
+                            profile,
+                            "contact_name",
+                            ""
+                        ) or "",
+
+                    "email":
+                        profile.user.email or "",
+
+                    "role": "employer",
+                    "user_role": "employer",
+
+                    "status": "Verified",
+                    "approval_status":
+                        profile.approval_status,
+
+                    "profile_completed":
+                        bool(
+                            getattr(
+                                profile,
+                                "profile_completed",
+                                True
+                            )
+                        ),
+
+                    "joined":
+                        profile.created_at,
+
+                    # Employers are NOT counted as disabled.
+                    "disability": False,
+                    "has_disability": False,
+                    "disability_category": "",
+                    "disability_type": "",
+                    "disability_percentage": None,
+
+                    "disability_details": {
+                        "has_disability": False,
+                        "category": "",
+                        "type": "",
+                        "percentage": None,
+                    },
+                }
+            )
+
+        # ========================================================
+        # FINAL SORT
+        # ========================================================
+
+        users.sort(
+            key=lambda item: (
+                item.get("joined")
+                if item.get("joined")
+                else ""
+            ),
+            reverse=True,
+        )
+
+        # ========================================================
+        # RESPONSE
+        # ========================================================
+        #
+        # Return the plain list.
+        # The existing Users.jsx can consume this directly.
+        # ========================================================
+
+        return Response(
+            users,
+            status=status.HTTP_200_OK
+        )
+
+
+    
+# =========================================================
+# ADMIN - NOTIFICATION USERS
+# =========================================================
+
+class AdminNotificationUsersView(APIView):
+
+    permission_classes = [
+        IsAuthenticated,
+        IsAdminUserRole,
+    ]
+
+    def get(self, request):
+
+        jobseekers = []
+
+        employers = []
+
+        # =====================================================
+        # JOB SEEKERS
+        # =====================================================
+
+        jobseeker_profiles = (
+            JobSeekerProfile.objects
+            .select_related("user")
+            .filter(
+                user__is_active=True
+            )
+            .order_by("full_name")
+        )
+
+        for profile in jobseeker_profiles:
 
             name = (
                 profile.full_name
@@ -2123,88 +2537,261 @@ class AdminUsersView(APIView):
                 or profile.user.email
             )
 
-            users.append(
-                {
-                    "id": profile.id,
-
-                    "user_id": profile.user.id,
-
-                    "name": name,
-
-                    "email": profile.user.email,
-
-                    "role": "job seeker",
-
-                    "status": "Verified",
-
-                    "joined": profile.created_at,
-
-                    "profile_completed":
-                        profile.profile_completed,
-
-                    "approval_status":
-                        profile.approval_status,
-                }
-            )
+            jobseekers.append({
+                "id": profile.user.id,
+                "name": name,
+                "email": profile.user.email,
+                "role": "jobseeker",
+            })
 
         # =====================================================
-        # APPROVED EMPLOYERS
+        # EMPLOYERS
         # =====================================================
 
-        approved_employers = (
+        employer_profiles = (
             EmployerProfile.objects
-            .filter(
-                approval_status="approved"
-            )
             .select_related("user")
-            .order_by("-updated_at")
+            .filter(
+                user__is_active=True
+            )
+            .order_by("company_name")
         )
 
-        for profile in approved_employers:
+        for profile in employer_profiles:
 
             name = (
                 profile.company_name
+                or profile.contact_name
                 or profile.user.get_full_name()
                 or profile.user.email
             )
 
-            users.append(
+            employers.append({
+                "id": profile.user.id,
+                "name": name,
+                "email": profile.user.email,
+                "role": "employer",
+            })
+
+        # =====================================================
+        # RESPONSE
+        # =====================================================
+
+        return Response(
+            {
+                "jobseekers": jobseekers,
+                "employers": employers,
+            },
+            status=status.HTTP_200_OK
+        )
+    
+# =========================================================
+# ADMIN - SEND NOTIFICATION
+# =========================================================
+
+class AdminSendNotificationView(APIView):
+
+    permission_classes = [
+        IsAuthenticated,
+        IsAdminUserRole,
+    ]
+
+    def post(self, request):
+
+        # =====================================================
+        # GET DATA
+        # =====================================================
+
+        recipient_type = (
+            request.data.get(
+                "recipient_type",
+                ""
+            )
+            or ""
+        ).strip().upper()
+
+        title = (
+            request.data.get(
+                "title",
+                ""
+            )
+            or ""
+        ).strip()
+
+        message = (
+            request.data.get(
+                "message",
+                ""
+            )
+            or ""
+        ).strip()
+
+        user_ids = request.data.get(
+            "user_ids",
+            []
+        )
+
+        # =====================================================
+        # VALIDATION
+        # =====================================================
+
+        if not recipient_type:
+
+            return Response(
                 {
-                    "id": profile.id,
+                    "detail":
+                        "Recipient type is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-                    "user_id": profile.user.id,
+        allowed_types = [
+            "JOBSEEKERS",
+            "EMPLOYERS",
+            "EVERYONE",
+            "SELECTED",
+        ]
 
-                    "name": name,
+        if recipient_type not in allowed_types:
 
-                    "email": profile.user.email,
+            return Response(
+                {
+                    "detail":
+                        "Invalid recipient type."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-                    "role": "employer",
+        if not title:
 
-                    "status": "Verified",
+            return Response(
+                {
+                    "detail":
+                        "Notification title is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-                    "joined": profile.created_at,
+        if not message:
 
-                    "profile_completed":
-                        getattr(
-                            profile,
-                            "profile_completed",
-                            True
-                        ),
-
-                    "approval_status":
-                        profile.approval_status,
-                }
+            return Response(
+                {
+                    "detail":
+                        "Notification message is required."
+                },
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         # =====================================================
-        # SORT
+        # SELECT RECIPIENTS
         # =====================================================
 
-        users.sort(
-            key=lambda item: item["joined"]
-            if item["joined"]
-            else "",
-            reverse=True
+        recipients = User.objects.none()
+
+        # -----------------------------------------------------
+        # JOB SEEKERS
+        # -----------------------------------------------------
+
+        if recipient_type == "JOBSEEKERS":
+
+            recipients = User.objects.filter(
+                is_active=True,
+                jobseeker_profile__isnull=False
+            )
+
+        # -----------------------------------------------------
+        # EMPLOYERS
+        # -----------------------------------------------------
+
+        elif recipient_type == "EMPLOYERS":
+
+            recipients = User.objects.filter(
+                is_active=True,
+                employer_profile__isnull=False
+            )
+
+        # -----------------------------------------------------
+        # EVERYONE
+        # -----------------------------------------------------
+
+        elif recipient_type == "EVERYONE":
+
+            recipients = User.objects.filter(
+                is_active=True,
+                is_staff=False,
+                is_superuser=False
+            ).filter(
+                Q(
+                    jobseeker_profile__isnull=False
+                )
+                |
+                Q(
+                    employer_profile__isnull=False
+                )
+            )
+
+        # -----------------------------------------------------
+        # SELECTED USERS
+        # -----------------------------------------------------
+
+        elif recipient_type == "SELECTED":
+
+            if not isinstance(
+                user_ids,
+                list
+            ):
+
+                return Response(
+                    {
+                        "detail":
+                            "user_ids must be a list."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not user_ids:
+
+                return Response(
+                    {
+                        "detail":
+                            "Please select at least one user."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            recipients = User.objects.filter(
+                id__in=user_ids,
+                is_active=True
+            ).filter(
+                Q(
+                    jobseeker_profile__isnull=False
+                )
+                |
+                Q(
+                    employer_profile__isnull=False
+                )
+            )
+
+        # =====================================================
+        # CREATE NOTIFICATIONS
+        # =====================================================
+
+        notifications = []
+
+        for user in recipients.distinct():
+
+            notifications.append(
+                Notification(
+                    recipient=user,
+                    title=title,
+                    message=message,
+                    notification_type="ADMIN",
+                    is_read=False,
+                )
+            )
+
+        Notification.objects.bulk_create(
+            notifications
         )
 
         # =====================================================
@@ -2212,14 +2799,20 @@ class AdminUsersView(APIView):
         # =====================================================
 
         return Response(
-            users,
-            status=status.HTTP_200_OK
+            {
+                "message":
+                    "Notification sent successfully.",
+
+                "recipient_type":
+                    recipient_type,
+
+                "recipient_count":
+                    len(notifications),
+            },
+            status=status.HTTP_201_CREATED
         )
     
-# =========================================================
-# ADMIN - EMPLOYER PROFILE
-# =========================================================
-
+    
 # =========================================================
 # ADMIN - EMPLOYER PROFILE
 # =========================================================

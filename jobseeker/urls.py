@@ -1,31 +1,71 @@
 from django.urls import path
 
 from .views import (
+    # =====================================================
+    # AUTHENTICATION
+    # =====================================================
     JobSeekerSignupView,
     JobSeekerLoginView,
+    CurrentUserView,
+    LogoutView,
+
+    
+
+    # =====================================================
+    # PROFILE
+    # =====================================================
     JobSeekerProfileView,
+    SubmitProfileView,
+    ProfileStatusView,
 
-
-    EducationView,
+    # =====================================================
+    # EDUCATION
+    # =====================================================
+    EducationListCreateView,
     EducationDetailView,
 
-    ExperienceView,
+    # =====================================================
+    # EXPERIENCE
+    # =====================================================
+    ExperienceListCreateView,
     ExperienceDetailView,
 
-    ProjectView,
+    # =====================================================
+    # PROJECT
+    # =====================================================
+    ProjectListCreateView,
     ProjectDetailView,
 
-    JobSeekerJobDetailView,
-
-    MyApplicationsView,
-    JobApplicationDetailView,
-    ApplyJobView,
-
-    SubmitProfileView,
+    # =====================================================
+    # JOBS
+    # =====================================================
     JobListView,
+    ApplyJobView,
+    MyApplicationsView,
 
-    JobSeekerProjectListCreateView,
-    JobSeekerProjectDetailView,
+    # =====================================================
+    # NOTIFICATIONS
+    # =====================================================
+    NotificationListView,
+    NotificationReadView,
+    MarkAllNotificationsReadView,
+    NotificationDeleteView,
+
+    # =====================================================
+    # CHAT
+    # =====================================================
+
+    ConversationListCreateView,
+    ConversationMessagesView,
+    ConversationReadView,
+    ConversationDeleteView,
+
+    # =====================================================
+    # PASSWORD
+    # =====================================================
+    ForgotPasswordView,
+    VerifyOTPView,
+    ResetPasswordView,
 )
 
 
@@ -38,16 +78,27 @@ urlpatterns = [
     path(
         "signup/",
         JobSeekerSignupView.as_view(),
-        name="jobseeker-signup"
+        name="jobseeker-signup",
     ),
-    
+
     path(
         "login/",
         JobSeekerLoginView.as_view(),
-        name="jobseeker-login"
+        name="jobseeker-login",
+    ),
+
+    path(
+        "me/",
+        CurrentUserView.as_view(),
+        name="current-user",
+    ),
+
+    path(
+        "logout/",
+        LogoutView.as_view(),
+        name="jobseeker-logout",
     ),
     
-
 
     # =====================================================
     # PROFILE
@@ -56,15 +107,20 @@ urlpatterns = [
     path(
         "profile/",
         JobSeekerProfileView.as_view(),
-        name="jobseeker-profile"
+        name="jobseeker-profile",
     ),
 
     path(
-        "submit-profile/",
-        SubmitProfileView.as_view(),
-        name="submit-profile",
+        "profile/status/",
+        ProfileStatusView.as_view(),
+        name="profile-status",
     ),
 
+    path(
+        "profile/submit/",
+        SubmitProfileView.as_view(),
+        name="jobseeker-profile-submit",
+    ),
 
 
     # =====================================================
@@ -73,14 +129,14 @@ urlpatterns = [
 
     path(
         "education/",
-        EducationView.as_view(),
-        name="education"
+        EducationListCreateView.as_view(),
+        name="education",
     ),
 
     path(
-        "education/<int:education_id>/",
+        "education/<int:pk>/",
         EducationDetailView.as_view(),
-        name="education-detail"
+        name="education-detail",
     ),
 
 
@@ -90,14 +146,14 @@ urlpatterns = [
 
     path(
         "experience/",
-        ExperienceView.as_view(),
-        name="experience"
+        ExperienceListCreateView.as_view(),
+        name="experience",
     ),
 
     path(
-        "experience/<int:experience_id>/",
+        "experience/<int:pk>/",
         ExperienceDetailView.as_view(),
-        name="experience-detail"
+        name="experience-detail",
     ),
 
 
@@ -108,23 +164,13 @@ urlpatterns = [
     path(
         "jobs/",
         JobListView.as_view(),
-        name="job-list"
-    ),
-
-    # IMPORTANT:
-    # Use job_id because your view method is:
-    # def get(self, request, job_id)
-
-    path(
-        "jobs/<int:job_id>/",
-        JobSeekerJobDetailView.as_view(),
-        name="jobseeker-job-detail"
+        name="job-list",
     ),
 
     path(
         "jobs/<int:job_id>/apply/",
         ApplyJobView.as_view(),
-        name="apply-job"
+        name="apply-job",
     ),
 
 
@@ -133,28 +179,15 @@ urlpatterns = [
     # =====================================================
 
     path(
-        "project/",
-        ProjectView.as_view(),
-        name="project"
-    ),
-
-    path(
-        "project/<int:project_id>/",
-        ProjectDetailView.as_view(),
-        name="project-detail"
-    ),
-
-    # If your frontend uses /projects/
-    path(
         "projects/",
-        JobSeekerProjectListCreateView.as_view(),
-        name="jobseeker-projects"
+        ProjectListCreateView.as_view(),
+        name="project-list-create",
     ),
 
     path(
         "projects/<int:pk>/",
-        JobSeekerProjectDetailView.as_view(),
-        name="jobseeker-project-detail"
+        ProjectDetailView.as_view(),
+        name="project-detail",
     ),
 
 
@@ -165,12 +198,89 @@ urlpatterns = [
     path(
         "applications/",
         MyApplicationsView.as_view(),
-        name="my-applications"
+        name="my-applications",
+    ),
+
+
+    # =====================================================
+    # NOTIFICATIONS
+    # =====================================================
+
+    # IMPORTANT:
+    # Keep read-all before the integer notification URL.
+
+    path(
+        "notifications/read-all/",
+        MarkAllNotificationsReadView.as_view(),
+        name="notification-read-all",
     ),
 
     path(
-        "applications/<int:application_id>/",
-        JobApplicationDetailView.as_view(),
-        name="application-detail"
+        "notifications/",
+        NotificationListView.as_view(),
+        name="notification-list",
+    ),
+
+    path(
+        "notifications/<int:notification_id>/read/",
+        NotificationReadView.as_view(),
+        name="notification-read",
+    ),
+
+    path(
+        "notifications/<int:notification_id>/",
+        NotificationDeleteView.as_view(),
+        name="notification-delete",
+    ),
+
+    # =====================================================
+    # CHAT
+    # =====================================================
+
+    path(
+        "chat/conversations/",
+        ConversationListCreateView.as_view(),
+        name="chat-conversations",
+    ),
+
+    path(
+        "chat/conversations/<int:conversation_id>/messages/",
+        ConversationMessagesView.as_view(),
+        name="chat-messages",
+    ),
+
+    path(
+        "chat/conversations/<int:conversation_id>/read/",
+        ConversationReadView.as_view(),
+        name="chat-read",
+    ),
+
+    path(
+        "chat/conversations/<int:conversation_id>/",
+        ConversationDeleteView.as_view(),
+        name="chat-delete",
+    ),
+
+
+    # =====================================================
+    # FORGOT PASSWORD
+    # =====================================================
+
+    path(
+        "forgot-password/",
+        ForgotPasswordView.as_view(),
+        name="forgot-password",
+    ),
+
+    path(
+        "verify-otp/",
+        VerifyOTPView.as_view(),
+        name="verify-otp",
+    ),
+
+    path(
+        "reset-password/",
+        ResetPasswordView.as_view(),
+        name="reset-password",
     ),
 ]

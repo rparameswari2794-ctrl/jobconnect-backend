@@ -1,10 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
 
-
-
-
-
 class JobSeekerProfile(models.Model):
 
     APPROVAL_STATUS_CHOICES = [
@@ -19,34 +15,69 @@ class JobSeekerProfile(models.Model):
         related_name="jobseeker_profile"
     )
 
-    full_name = models.CharField(max_length=150)
+    full_name = models.CharField(
+        max_length=150
+    )
 
     phone = models.CharField(
         max_length=20,
         blank=True
     )
+
     linkedin = models.URLField(
-    blank=True
+        blank=True
     )
 
     headline = models.CharField(
-    max_length=300,
-    blank=True
+        max_length=300,
+        blank=True
     )
-
-    
 
     skills = models.TextField(
         blank=True
     )
 
+    # =====================================================
+    # DISABILITY DETAILS
+    # =====================================================
+
+    disability = models.BooleanField(
+        default=False
+    )
+
+    disability_category = models.CharField(
+        max_length=100,
+        blank=True,
+        default=""
+    )
+
+    disability_type = models.CharField(
+        max_length=150,
+        blank=True,
+        default=""
+    )
+
+    disability_percentage = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
+
+    # =====================================================
+    # LOCATION
+    # =====================================================
 
     location = models.CharField(
         max_length=150,
         blank=True
     )
+
     aadhaar = models.FileField(
         upload_to="aadhaar/",
+        blank=True,
+        null=True
+    )
+    disability_certificate = models.FileField(
+        upload_to="disability_documents/",
         blank=True,
         null=True
     )
@@ -88,7 +119,8 @@ class JobSeekerProfile(models.Model):
 
     def __str__(self):
         return self.full_name
-    
+
+
 class JobApplication(models.Model):
 
     STATUS_CHOICES = [
@@ -280,3 +312,153 @@ class Project(models.Model):
 
     def __str__(self):
         return f"{self.jobseeker.full_name} - {self.name}"
+    
+
+# =========================================================
+# NOTIFICATION
+# =========================================================
+
+
+
+class Notification(models.Model):
+    NOTIFICATION_TYPES = [
+        ("ADMIN", "Admin Notification"),
+        ("APPLICATION", "Application Status"),
+        ("PROFILE", "Profile Update"),
+        ("JOB", "New Job"),
+    ]
+
+    recipient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+
+    notification_type = models.CharField(
+        max_length=20,
+        choices=NOTIFICATION_TYPES,
+        default="ADMIN",
+    )
+
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.recipient.username} - {self.title}"
+    
+# ============================================================
+# CHAT MODELS
+# ============================================================
+
+
+class Conversation(models.Model):
+    participant_one = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="chat_conversations_one",
+    )
+
+    participant_two = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="chat_conversations_two",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "participant_one",
+                    "participant_two",
+                ],
+                name="unique_chat_user_pair",
+            )
+        ]
+
+        ordering = ["-updated_at"]
+
+    def has_participant(self, user):
+        return user.id in {
+            self.participant_one_id,
+            self.participant_two_id,
+        }
+
+    def other_participant(self, user):
+        if self.participant_one_id == user.id:
+            return self.participant_two
+
+        return self.participant_one
+
+    def __str__(self):
+        return (
+            f"Conversation {self.pk}: "
+            f"{self.participant_one_id} - "
+            f"{self.participant_two_id}"
+        )
+
+
+class Message(models.Model):
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="chat_messages",
+    )
+
+    text = models.TextField()
+
+    is_read = models.BooleanField(
+        default=False
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+
+    class Meta:
+        ordering = [
+            "created_at",
+            "id",
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "conversation",
+                    "created_at",
+                ],
+                name="chat_msg_conv_created_idx",
+            ),
+
+            models.Index(
+                fields=[
+                    "conversation",
+                    "is_read",
+                ],
+                name="chat_msg_conv_read_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"Message {self.pk} - "
+            f"Conversation {self.conversation_id}"
+        )

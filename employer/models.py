@@ -257,6 +257,10 @@ class Job(models.Model):
         choices=WORK_MODE_CHOICES,
         default="onsite"
     )
+    is_disability_job = models.BooleanField(
+        default=False
+    )
+
 
     # =====================================================
     # JOB TYPE
