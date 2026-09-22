@@ -2554,25 +2554,30 @@ class EmployerApplicationStatusView(APIView):
             )
 
         # =====================================================
+        # SAME CANDIDATE + SAME COMPANY APPLICATIONS
+        #
         # IMPORTANT:
         #
-        # DIRECTLY FIND SAME CANDIDATE + SAME COMPANY
+        # We identify applications using:
         #
-        # We DO NOT use job ID here.
+        # jobseeker_id
+        # +
+        # job__employer_id
+        #
+        # Therefore applications belonging to other companies
+        # are NOT included in this queryset.
         #
         # Example:
         #
-        # Candidate = Parameswari
-        #
         # Company A:
-        #   Job 1 -> Hired
-        #   Job 2 -> Under Review
-        #   Job 3 -> Shortlisted
+        #   Job 1 -> HIRED
+        #   Job 2 -> UNDER REVIEW
+        #   Job 3 -> SHORTLISTED
         #
         # Company B:
-        #   Job 4 -> Applied
+        #   Job 4 -> APPLIED
         #
-        # When Company A hires Job 1:
+        # Result:
         #
         # Job 1 -> HIRED
         # Job 2 -> REJECTED
@@ -2600,7 +2605,26 @@ class EmployerApplicationStatusView(APIView):
         )
 
         # =====================================================
+        # STANDARD AUTOMATIC REJECTION REASON
+        # =====================================================
+
+        automatic_rejection_reason_type = (
+            "SELECTED_ELSEWHERE"
+        )
+
+        automatic_rejection_reason = (
+            "The candidate has been selected for another "
+            "position within our organization. Therefore, "
+            "the candidate's other active applications with "
+            "our company have been closed to avoid duplicate "
+            "consideration for multiple positions."
+        )
+
+        # =====================================================
         # ALREADY HIRED -> SYNCHRONIZE OLD DATA
+        #
+        # This protects the system if the same HIRED request
+        # is sent again.
         # =====================================================
 
         if (
@@ -2626,13 +2650,25 @@ class EmployerApplicationStatusView(APIView):
                     continue
 
                 # =================================================
-                # SAME CANDIDATE + SAME COMPANY
+                # AUTOMATICALLY REJECT SAME-COMPANY APPLICATION
                 # =================================================
 
                 other_application.status = "REJECTED"
 
+                other_application.rejection_reason_type = (
+                    automatic_rejection_reason_type
+                )
+
+                other_application.rejection_reason = (
+                    automatic_rejection_reason
+                )
+
                 other_application.save(
-                    update_fields=["status"]
+                    update_fields=[
+                        "status",
+                        "rejection_reason_type",
+                        "rejection_reason",
+                    ]
                 )
 
                 same_company_rejected += 1
@@ -2641,43 +2677,57 @@ class EmployerApplicationStatusView(APIView):
                     other_application.id
                 )
 
+            # =================================================
+            # DEBUG INFORMATION
+            # =================================================
+
             print(
                 "\n========================================"
             )
+
             print(
                 "HIRED APPLICATION SYNCHRONIZATION"
             )
+
             print(
                 "========================================"
             )
+
             print(
                 "Candidate:",
                 jobseeker.full_name
             )
+
             print(
                 "Candidate User ID:",
                 candidate_user.id
             )
+
             print(
                 "Hired Application ID:",
                 application.id
             )
+
             print(
                 "Employer Profile ID:",
                 selected_employer.id
             )
+
             print(
                 "Company:",
                 company_name
             )
+
             print(
                 "Same Company Rejected:",
                 same_company_rejected
             )
+
             print(
                 "Rejected Application IDs:",
                 rejected_application_ids
             )
+
             print(
                 "========================================\n"
             )
@@ -2686,8 +2736,9 @@ class EmployerApplicationStatusView(APIView):
                 {
                     "message":
                         "Application is already HIRED. "
-                        "Same candidate's other applications "
-                        "with the same company were synchronized.",
+                        "Same candidate's other active "
+                        "applications with the same company "
+                        "were synchronized.",
 
                     "application_id":
                         application.id,
@@ -2724,9 +2775,33 @@ class EmployerApplicationStatusView(APIView):
 
             application.status = new_status
 
-            application.save(
-                update_fields=["status"]
-            )
+            # If employer manually rejects an application,
+            # clear any previous automatic rejection reason.
+            if new_status == "REJECTED":
+
+                application.rejection_reason_type = (
+                    "EMPLOYER_REJECTED"
+                )
+
+                application.rejection_reason = (
+                    "The application was rejected by the employer."
+                )
+
+                application.save(
+                    update_fields=[
+                        "status",
+                        "rejection_reason_type",
+                        "rejection_reason",
+                    ]
+                )
+
+            else:
+
+                application.save(
+                    update_fields=[
+                        "status"
+                    ]
+                )
 
             return Response(
                 {
@@ -2806,8 +2881,16 @@ class EmployerApplicationStatusView(APIView):
 
         application.status = "HIRED"
 
+        # A hired application should not have a rejection reason.
+        application.rejection_reason_type = None
+        application.rejection_reason = ""
+
         application.save(
-            update_fields=["status"]
+            update_fields=[
+                "status",
+                "rejection_reason_type",
+                "rejection_reason",
+            ]
         )
 
         # =====================================================
@@ -2816,12 +2899,10 @@ class EmployerApplicationStatusView(APIView):
         #
         # IMPORTANT:
         #
-        # same_company_apps was selected using:
+        # Only applications belonging to selected_employer
+        # are processed here.
         #
-        # jobseeker_id = candidate
-        # job__employer_id = current company
-        #
-        # Therefore OTHER COMPANIES ARE NEVER TOUCHED.
+        # OTHER COMPANIES ARE NEVER CHANGED.
         # =====================================================
 
         same_company_rejected = 0
@@ -2842,13 +2923,25 @@ class EmployerApplicationStatusView(APIView):
                 continue
 
             # =================================================
-            # REJECT
+            # AUTOMATIC REJECTION
             # =================================================
 
             other_application.status = "REJECTED"
 
+            other_application.rejection_reason_type = (
+                automatic_rejection_reason_type
+            )
+
+            other_application.rejection_reason = (
+                automatic_rejection_reason
+            )
+
             other_application.save(
-                update_fields=["status"]
+                update_fields=[
+                    "status",
+                    "rejection_reason_type",
+                    "rejection_reason",
+                ]
             )
 
             same_company_rejected += 1
@@ -2864,6 +2957,10 @@ class EmployerApplicationStatusView(APIView):
 
         # =====================================================
         # FIND OTHER COMPANIES WHERE THIS CANDIDATE APPLIED
+        #
+        # THESE APPLICATIONS ARE ONLY USED FOR NOTIFICATION.
+        #
+        # THEY ARE NOT UPDATED.
         # =====================================================
 
         other_company_employers = {}
@@ -2923,9 +3020,17 @@ class EmployerApplicationStatusView(APIView):
                 f"{company_name} for the position "
                 f"'{job_title}'.\n\n"
 
-                "Your other applications with "
-                "the same company have been "
-                "automatically rejected.\n\n"
+                "Your other active applications with "
+                "the same company have been automatically "
+                "closed because you have been selected for "
+                "another position within the organization.\n\n"
+
+                "This prevents duplicate consideration "
+                "for multiple positions within the same "
+                "company.\n\n"
+
+                "Applications you submitted to other "
+                "companies have not been changed.\n\n"
 
                 "If you do not accept this hiring "
                 "decision, please use Help & Support "
@@ -2970,12 +3075,16 @@ class EmployerApplicationStatusView(APIView):
         # =====================================================
         # NOTIFY OTHER COMPANIES
         #
+        # IMPORTANT:
+        #
         # Their applications remain unchanged.
         # =====================================================
 
         other_employer_notifications = []
 
-        for other_employer in other_company_employers.values():
+        for other_employer in (
+            other_company_employers.values()
+        ):
 
             other_employer_notifications.append(
 
@@ -3060,10 +3169,13 @@ class EmployerApplicationStatusView(APIView):
                         f"Application ID: "
                         f"{application.id}\n\n"
 
-                        "Other applications with "
-                        "the same company: "
+                        "Other active applications "
+                        "with the same company: "
                         f"{same_company_rejected} "
-                        "automatically rejected."
+                        "automatically closed.\n\n"
+
+                        "Applications with other "
+                        "companies remain unchanged."
                     ),
 
                     notification_type="JOB",

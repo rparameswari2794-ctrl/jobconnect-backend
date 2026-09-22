@@ -124,13 +124,22 @@ class JobSeekerProfile(models.Model):
 class JobApplication(models.Model):
 
     STATUS_CHOICES = [
-    ("APPLIED", "Applied"),
-    ("UNDER REVIEW", "Under Review"),
-    ("SHORTLISTED", "Shortlisted"),
-    ("INTERVIEW SCHEDULED", "Interview Scheduled"),
-    ("REJECTED", "Rejected"),
-    ("HIRED", "Hired"),
-]
+        ("APPLIED", "Applied"),
+        ("UNDER REVIEW", "Under Review"),
+        ("SHORTLISTED", "Shortlisted"),
+        ("INTERVIEW SCHEDULED", "Interview Scheduled"),
+        ("REJECTED", "Rejected"),
+        ("HIRED", "Hired"),
+    ]
+
+    REJECTION_REASON_CHOICES = [
+        ("SELECTED_ELSEWHERE", "Selected for another position"),
+        ("REQUIREMENTS_NOT_MATCHED", "Requirements not matched"),
+        ("POSITION_FILLED", "Position filled"),
+        ("HIRING_COMPLETED", "Hiring process completed"),
+        ("EMPLOYER_REJECTED", "Rejected by employer"),
+        ("OTHER", "Other"),
+    ]
 
     jobseeker = models.ForeignKey(
         "JobSeekerProfile",
@@ -148,6 +157,18 @@ class JobApplication(models.Model):
         max_length=30,
         choices=STATUS_CHOICES,
         default="APPLIED"
+    )
+
+    rejection_reason_type = models.CharField(
+        max_length=50,
+        choices=REJECTION_REASON_CHOICES,
+        blank=True,
+        null=True
+    )
+
+    rejection_reason = models.TextField(
+        blank=True,
+        default=""
     )
 
     applied_at = models.DateTimeField(
